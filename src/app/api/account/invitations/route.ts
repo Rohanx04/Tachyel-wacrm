@@ -63,16 +63,15 @@ import {
 //
 //   When `ALLOWED_INVITE_HOSTS` is set (comma-separated hostnames),
 //   we validate the derived host against the list. Anything not
-//   on the list falls through to the wacrm.tech fallback with a
-//   loud console.warn. Operators who care about this attack
-//   surface should set this to their canonical hostnames; everyone
-//   else gets today's permissive behavior.
+//   on the list is rejected with a loud console.warn. Operators who
+//   care about this attack surface should set this to their
+//   canonical hostnames; everyone else gets permissive behavior.
 //
-// Previous implementation hard-defaulted to `https://wacrm.tech`
-// (the docs/marketing site, a different repo). Forks that didn't
-// set `NEXT_PUBLIC_SITE_URL` got invite links pointing at the
-// marketing site, which 404s on `/join/<token>`. This resolution
-// chain removes the foot-gun.
+// When no base URL can be derived at all (no usable Host header, or
+// nothing passed the allow-list), the request fails with a 500 that
+// tells the operator to set NEXT_PUBLIC_SITE_URL. The upstream
+// template fell back to its marketing domain here, which would have
+// produced invite links pointing at a site we don't own.
 function parseAllowedHosts(): readonly string[] | null {
   const raw = process.env.ALLOWED_INVITE_HOSTS?.trim();
   if (!raw) return null;
@@ -91,7 +90,7 @@ function isHostAllowed(
   return allowList.includes(hostname.toLowerCase());
 }
 
-function getBaseUrl(request: Request): string {
+function getBaseUrl(request: Request): string | null {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
 
@@ -128,10 +127,10 @@ function getBaseUrl(request: Request): string {
     );
   } else {
     console.warn(
-      "[POST /api/account/invitations] could not derive base URL from request; falling back to marketing domain",
+      "[POST /api/account/invitations] could not derive base URL from request; set NEXT_PUBLIC_SITE_URL",
     );
   }
-  return "https://wacrm.tech";
+  return null;
 }
 
 const MAX_LABEL_LEN = 80;
@@ -214,6 +213,20 @@ export async function POST(request: Request) {
       label = trimmed === "" ? null : trimmed;
     }
 
+    // Resolve the public base URL BEFORE inserting: if the server
+    // can't build a usable invite link there is no point persisting
+    // an invitation row nobody can redeem.
+    const baseUrl = getBaseUrl(request);
+    if (!baseUrl) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot build the invite link: the server could not determine its own public URL. Set NEXT_PUBLIC_SITE_URL to this deployment's canonical URL.",
+        },
+        { status: 500 },
+      );
+    }
+
     const { token, hash } = generateInviteToken();
 
     const { data, error } = await ctx.supabase
@@ -242,7 +255,7 @@ export async function POST(request: Request) {
         invitation: data,
         // Plaintext payload — visible to the admin exactly once.
         token,
-        url: inviteUrl(token, getBaseUrl(request)),
+        url: inviteUrl(token, baseUrl),
         expiresInDays: expiryDays,
       },
       { status: 201 },
