@@ -44,7 +44,7 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`, or
       "args": ["-y", "wacrm-mcp"],
       "env": {
         "WACRM_BASE_URL": "https://crm.example.com",
-        "WACRM_API_KEY": "wacrm_live_xxxxxxxxxxxxxxxxxxxxxxxx"
+        "WACRM_API_KEY": "tachyel_live_xxxxxxxxxxxxxxxxxxxxxxxx"
       }
     }
   }
@@ -57,7 +57,7 @@ assistant change data or send messages, add the write guards:
 ```jsonc
 "env": {
   "WACRM_BASE_URL": "https://crm.example.com",
-  "WACRM_API_KEY": "wacrm_live_xxxxxxxxxxxxxxxxxxxxxxxx",
+  "WACRM_API_KEY": "tachyel_live_xxxxxxxxxxxxxxxxxxxxxxxx",
   "WACRM_ENABLE_WRITES": "true",
   "WACRM_ENABLE_BROADCASTS": "true"
 }
