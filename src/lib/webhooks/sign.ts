@@ -1,11 +1,11 @@
 // ============================================================
 // Webhook payload signing — pure, server-side.
 //
-// Every delivery carries an `X-Wacrm-Signature` header so receivers
+// Every delivery carries an `X-Tachyel-Signature` header so receivers
 // can verify the request really came from wacrm and wasn't tampered
 // with or replayed. The scheme is Stripe-style:
 //
-//   X-Wacrm-Signature: t=<unix_seconds>,v1=<hex HMAC-SHA256>
+//   X-Tachyel-Signature: t=<unix_seconds>,v1=<hex HMAC-SHA256>
 //
 // where the signed message is `${t}.${rawBody}` and the key is the
 // endpoint's secret. Receivers recompute the HMAC over the raw body
@@ -16,7 +16,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /**
- * Build the `X-Wacrm-Signature` header value for `rawBody`, signed
+ * Build the `X-Tachyel-Signature` header value for `rawBody`, signed
  * with `secret` at time `timestampSeconds` (pass it in — never call
  * Date.now() here, so the value is testable and callers control the
  * clock).

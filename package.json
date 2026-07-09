@@ -1,17 +1,17 @@
 {
-  "name": "wacrm",
+  "name": "tachyel-crm",
   "version": "0.8.0",
   "private": true,
-  "description": "Self-hostable CRM template for WhatsApp built on Next.js and Supabase — shared inbox, contacts, sales pipelines, broadcasts, and no-code automations.",
+  "description": "Tachyel CRM \u2014 WhatsApp CRM for business: shared inbox, contacts, sales pipelines, broadcasts, and no-code automations. Built on Next.js and Supabase.",
   "license": "MIT",
-  "author": "Arnas Donauskas",
-  "homepage": "https://github.com/ArnasDon/wacrm",
+  "author": "Tachyel Technologies Private Limited",
+  "homepage": "https://github.com/Rohanx04/Tachyel-wacrm",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ArnasDon/wacrm.git"
+    "url": "git+https://github.com/Rohanx04/Tachyel-wacrm.git"
   },
   "bugs": {
-    "url": "https://github.com/ArnasDon/wacrm/issues"
+    "url": "https://github.com/Rohanx04/Tachyel-wacrm/issues"
   },
   "keywords": [
     "crm",
