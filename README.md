@@ -83,6 +83,8 @@ npm run typecheck && npm run lint && npm run test
    | `NEXT_PUBLIC_SITE_URL` | yes in prod | Canonical URL; invite links fail loudly without a derivable origin |
    | `ALLOWED_INVITE_HOSTS` | recommended | Host-header allow-list for invite links |
    | `AUTOMATION_CRON_SECRET` | if using Wait steps | Protects `GET /api/automations/cron`; point a scheduler at it |
+   | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | for outbound email | SMTP relay for registration/auth emails and emailed invites — see [docs/email.md](./docs/email.md) |
+   | `SEND_EMAIL_HOOK_SECRET` | with the Send Email hook | Verifies Supabase Auth hook calls to `/api/auth/send-email` |
 
 5. **After two stable deploys** — flip the CSP header in
    `next.config.ts` from `Content-Security-Policy-Report-Only` to

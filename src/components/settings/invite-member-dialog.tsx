@@ -4,10 +4,14 @@
 // InviteMemberDialog
 //
 // Two-step modal:
-//   1. Form  — role + expiry + optional label → POST creates the invite.
+//   1. Form  — role + expiry + optional invitee email + optional
+//              label → POST creates the invite. When an email is
+//              given the server also mails the link (if SMTP is
+//              configured — see docs/email.md).
 //   2. Result — the share URL, returned ONCE. Copy-to-clipboard, plus a
 //              "Send via WhatsApp" deep link that pre-fills wa.me with
-//              a friendly message containing the URL.
+//              a friendly message containing the URL. Shows whether
+//              the invite email went out.
 //
 // The plaintext token is server-stored only as a SHA-256 hash, so once
 // the result step is dismissed the link is gone forever — the dialog
@@ -16,7 +20,7 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Copy, Loader2, MessageCircle, Sparkles } from 'lucide-react';
+import { Copy, Loader2, Mail, MessageCircle, Sparkles } from 'lucide-react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -67,6 +71,12 @@ interface CreatedInvite {
   /** Snapshotted at creation time so a later account rename can't
    *  retroactively change the wa.me message text on the result step. */
   accountName: string;
+  /** Address the server emailed the link to, when one was given. */
+  email: string | null;
+  /** Whether the server reported the invite email as delivered. */
+  emailSent: boolean;
+  /** Server-side explanation when the email could not be sent. */
+  emailError: string | null;
 }
 
 export function InviteMemberDialog({
@@ -79,6 +89,7 @@ export function InviteMemberDialog({
   const { account } = useAuth();
   const [role, setRole] = useState<InviteRole>('agent');
   const [expiry, setExpiry] = useState<string>('7');
+  const [email, setEmail] = useState('');
   const [label, setLabel] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<CreatedInvite | null>(null);
@@ -86,6 +97,7 @@ export function InviteMemberDialog({
   function reset() {
     setRole('agent');
     setExpiry('7');
+    setEmail('');
     setLabel('');
     setResult(null);
     setSubmitting(false);
@@ -103,6 +115,7 @@ export function InviteMemberDialog({
       toast.error(t('labelTooLong', { max: MAX_LABEL_LEN }));
       return;
     }
+    const trimmedEmail = email.trim();
     setSubmitting(true);
     try {
       const res = await fetch('/api/account/invitations', {
@@ -111,6 +124,7 @@ export function InviteMemberDialog({
         body: JSON.stringify({
           role,
           expiresInDays: Number(expiry),
+          email: trimmedEmail || undefined,
           label: trimmedLabel || undefined,
         }),
       });
@@ -124,12 +138,17 @@ export function InviteMemberDialog({
       const data = (await res.json()) as {
         url: string;
         expiresInDays: number;
+        emailSent?: boolean;
+        emailError?: string;
       };
 
       setResult({
         url: data.url,
         role,
         expiresInDays: data.expiresInDays,
+        email: trimmedEmail || null,
+        emailSent: Boolean(data.emailSent),
+        emailError: data.emailError ?? null,
         // Snapshot the account name into the result so the wa.me
         // share message has team context. Falls back to a generic
         // string if `account` hasn't loaded yet (shouldn't happen
@@ -198,6 +217,23 @@ export function InviteMemberDialog({
             </DialogHeader>
 
             <div className="space-y-3 py-2">
+              {result.email && (
+                result.emailSent ? (
+                  <div className="flex items-start gap-2 rounded-md border border-emerald-500/50 bg-emerald-500/15 px-3 py-2 text-xs text-emerald-200">
+                    <Mail className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
+                    <span>{t('emailSentBanner', { email: result.email })}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-2 rounded-md border border-red-500/50 bg-red-500/15 px-3 py-2 text-xs text-red-200">
+                    <Mail className="mt-0.5 size-3.5 shrink-0 text-red-300" />
+                    <span>
+                      {t('emailFailedBanner', { email: result.email })}
+                      {result.emailError ? ` ${result.emailError}` : ''}
+                    </span>
+                  </div>
+                )
+              )}
+
               <Label className="text-muted-foreground">{t('inviteLink')}</Label>
               <div className="flex gap-2">
                 <Input
@@ -304,6 +340,23 @@ export function InviteMemberDialog({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">
+                  {t('emailTitle')}{' '}
+                  <span className="text-xs text-muted-foreground">{t('optional')}</span>
+                </Label>
+                <Input
+                  type="email"
+                  placeholder={t('emailPlaceholder')}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('emailHint')}
+                </p>
               </div>
 
               <div className="space-y-2">
