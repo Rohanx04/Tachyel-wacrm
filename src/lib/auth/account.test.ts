@@ -145,6 +145,8 @@ describe("getCurrentAccount", () => {
   });
 
   it("rejects a profile not linked to an account", async () => {
+    // No `rpc` on this mock client → the self-heal path reports the
+    // repair RPC as unavailable and the original rejection stands.
     const { client } = makeClient({
       user: { id: "user-1" },
       byTable: {
@@ -155,6 +157,78 @@ describe("getCurrentAccount", () => {
     await expect(getCurrentAccount()).rejects.toThrow(
       "Profile is not linked to an account",
     );
+  });
+
+  it("self-heals an unlinked profile via ensure_account_for_current_user", async () => {
+    // First profiles read: unlinked. The RPC repairs the row, and the
+    // retry read returns the healed link.
+    const profileResults = [
+      { data: { account_id: null, account_role: null }, error: null },
+      { data: { account_id: "acct-1", account_role: "owner" }, error: null },
+    ];
+    const rpc = vi.fn().mockResolvedValue({ data: "acct-1", error: null });
+    const client = {
+      auth: {
+        getUser: () =>
+          Promise.resolve({ data: { user: { id: "user-1" } }, error: null }),
+      },
+      rpc,
+      from: (table: string) => {
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          maybeSingle: () =>
+            Promise.resolve(
+              table === "profiles"
+                ? profileResults.shift()!
+                : { data: { id: "acct-1", name: "Acme" }, error: null },
+            ),
+        };
+        return builder;
+      },
+    };
+    createClient.mockReturnValue(client);
+
+    const ctx = await getCurrentAccount();
+
+    expect(rpc).toHaveBeenCalledWith("ensure_account_for_current_user");
+    expect(ctx).toMatchObject({
+      userId: "user-1",
+      accountId: "acct-1",
+      role: "owner",
+      account: { id: "acct-1", name: "Acme" },
+    });
+  });
+
+  it("still rejects when the self-heal RPC fails", async () => {
+    const rpc = vi
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: "no such function" } });
+    const client = {
+      auth: {
+        getUser: () =>
+          Promise.resolve({ data: { user: { id: "user-1" } }, error: null }),
+      },
+      rpc,
+      from: () => {
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          maybeSingle: () =>
+            Promise.resolve({
+              data: { account_id: null, account_role: null },
+              error: null,
+            }),
+        };
+        return builder;
+      },
+    };
+    createClient.mockReturnValue(client);
+
+    await expect(getCurrentAccount()).rejects.toThrow(
+      "Profile is not linked to an account",
+    );
+    expect(rpc).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an account_id that resolves to no readable account", async () => {

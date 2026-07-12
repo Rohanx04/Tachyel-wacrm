@@ -7,28 +7,24 @@ import {
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
+import { ensureAccountId } from '@/lib/auth/account'
 
 /**
- * Resolve the caller's account_id from their profile. Inlined here
- * (rather than going through `@/lib/auth/account.getCurrentAccount`)
- * because the GET handler wants to return shaped 200s for every
- * non-auth failure mode, not throw — keeping the helper minimal lets
- * the existing response branches stay as-is.
+ * Resolve the caller's account_id from their profile. Uses the
+ * self-healing `ensureAccountId` helper (rather than a plain profile
+ * read) so a user whose signup bootstrap failed — profile row missing
+ * or account_id NULL — gets repaired on the spot instead of being
+ * stuck on "Your profile is not linked to an account." forever.
  *
- * Returns null if the user has no profile or no account; callers
- * should treat that the same as "not connected".
+ * Returns null only when the profile is unlinked AND the repair RPC
+ * (migration 037) is unavailable or failed; callers treat that the
+ * same as "not connected".
  */
 async function resolveAccountId(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
 ): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', userId)
-    .maybeSingle()
-  if (error || !data?.account_id) return null
-  return data.account_id as string
+  return ensureAccountId(supabase, userId)
 }
 
 // Lazy-initialised service-role client. We need it to detect a
