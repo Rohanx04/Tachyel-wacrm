@@ -135,13 +135,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfileLoading(true);
     lastFetchedUserIdRef.current = userId;
     try {
-      const { data, error } = await supabase
+      const profileRes = await supabase
         .from("profiles")
         .select(
           "id, full_name, email, avatar_url, role, beta_features, account_id, account_role",
         )
         .eq("user_id", userId)
         .maybeSingle();
+      let data = profileRes.data;
+      const error = profileRes.error;
 
       if (error) {
         console.error("[AuthProvider] fetchProfile error:", {
@@ -152,6 +154,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         lastFetchedUserIdRef.current = null;
         return;
+      }
+
+      // Self-heal a broken signup bootstrap. The DB trigger that
+      // creates the profile + personal account swallows failures by
+      // design, so a user can be authenticated with no profile row or
+      // a NULL account_id — every account-scoped screen then shows
+      // "profile is not linked to an account". The
+      // ensure_account_for_current_user RPC (migration 037) recreates
+      // the missing pieces for auth.uid(); one retry, then re-read.
+      if (!data || !data.account_id) {
+        try {
+          const { error: healErr } = await supabase.rpc(
+            "ensure_account_for_current_user",
+          );
+          if (healErr) {
+            // Older DB without migration 037, or RPC failure — fall
+            // through with whatever we already have.
+            console.warn(
+              "[AuthProvider] account self-heal unavailable:",
+              healErr.message,
+            );
+          } else {
+            const retry = await supabase
+              .from("profiles")
+              .select(
+                "id, full_name, email, avatar_url, role, beta_features, account_id, account_role",
+              )
+              .eq("user_id", userId)
+              .maybeSingle();
+            if (!retry.error && retry.data) {
+              data = retry.data;
+            }
+          }
+        } catch (healThrew) {
+          console.warn("[AuthProvider] account self-heal threw:", healThrew);
+        }
       }
 
       if (data) {

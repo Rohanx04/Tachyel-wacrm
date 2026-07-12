@@ -75,6 +75,68 @@ export function toErrorResponse(err: unknown): NextResponse {
 }
 
 // ------------------------------------------------------------
+// Self-heal
+// ------------------------------------------------------------
+
+/**
+ * Repair a missing profile/account link for the calling user by
+ * invoking the `ensure_account_for_current_user` RPC (migration 037).
+ *
+ * The signup trigger swallows exceptions by design (a failed
+ * bootstrap must never block auth), so a user can end up
+ * authenticated but with no profile row or a NULL `account_id` —
+ * every account-scoped route then rejects them with "Profile is not
+ * linked to an account". The RPC recreates the missing personal
+ * account + profile server-side (SECURITY DEFINER, keyed strictly to
+ * `auth.uid()`), turning that dead end into a one-time repair.
+ *
+ * Returns the healed `account_id`, or `null` when the RPC is
+ * unavailable (older DB without migration 037) or failed — callers
+ * fall back to their existing "not linked" handling.
+ */
+export async function healAccountLink(
+  supabase: SupabaseClient,
+): Promise<string | null> {
+  try {
+    if (typeof supabase.rpc !== "function") return null;
+    const { data, error } = await supabase.rpc(
+      "ensure_account_for_current_user",
+    );
+    if (error) {
+      console.error("[healAccountLink] RPC failed:", error);
+      return null;
+    }
+    return (data as string | null) ?? null;
+  } catch (err) {
+    console.error("[healAccountLink] RPC threw:", err);
+    return null;
+  }
+}
+
+/**
+ * Resolve the caller's `account_id` from their profile, self-healing
+ * a missing link via `healAccountLink` when needed. Returns `null`
+ * only when the profile is unlinked AND the repair RPC could not fix
+ * it. For API routes that only need the id (not role/account meta).
+ */
+export async function ensureAccountId(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("account_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!error && data?.account_id) return data.account_id as string;
+  if (error) {
+    console.error("[ensureAccountId] profile fetch error:", error);
+    return null;
+  }
+  return healAccountLink(supabase);
+}
+
+// ------------------------------------------------------------
 // Account context
 // ------------------------------------------------------------
 
@@ -114,20 +176,35 @@ export async function getCurrentAccount(): Promise<AccountContext> {
     throw new UnauthorizedError();
   }
 
-  const { data, error } = await supabase
+  const profileRes = await supabase
     .from("profiles")
     .select("account_id, account_role")
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (error) {
-    console.error("[getCurrentAccount] profile fetch error:", error);
+  if (profileRes.error) {
+    console.error("[getCurrentAccount] profile fetch error:", profileRes.error);
     throw new ForbiddenError("Could not load account context");
   }
+
+  let data = profileRes.data;
   if (!data || !data.account_id || !data.account_role) {
-    // Pre-migration profile, or a manual insert that skipped the
-    // signup trigger. The user is authenticated but the app has
-    // no way to scope their queries — treat as forbidden.
+    // Pre-migration profile, a manual insert that skipped the signup
+    // trigger, or a signup whose bootstrap trigger failed silently.
+    // Try the self-heal RPC once, then re-read the profile.
+    const healedId = await healAccountLink(supabase);
+    if (healedId) {
+      const retry = await supabase
+        .from("profiles")
+        .select("account_id, account_role")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!retry.error && retry.data) data = retry.data;
+    }
+  }
+  if (!data || !data.account_id || !data.account_role) {
+    // Still unlinked after the repair attempt — the app has no way
+    // to scope this user's queries; treat as forbidden.
     throw new ForbiddenError("Profile is not linked to an account");
   }
   if (!isAccountRole(data.account_role)) {
