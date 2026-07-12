@@ -2,7 +2,8 @@
 // /api/account/invitations
 //
 //   GET  — list outstanding (un-redeemed, non-expired) invites.
-//   POST — create a new invite link.
+//   POST — create a new invite link; optionally emails it to the
+//          invitee when SMTP is configured (see docs/email.md).
 //
 // Both admin+. The list endpoint is what the Members tab uses to
 // populate the "Pending invitations" section; create is what the
@@ -27,6 +28,8 @@ import {
   inviteUrl,
 } from "@/lib/auth/invitations";
 import { isAccountRole } from "@/lib/auth/roles";
+import { isSmtpConfigured, sendEmail } from "@/lib/email/mailer";
+import { buildInviteEmail } from "@/lib/email/templates";
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -135,6 +138,13 @@ function getBaseUrl(request: Request): string | null {
 
 const MAX_LABEL_LEN = 80;
 
+// RFC 5321 caps the whole address at 254 octets. The format check is
+// deliberately loose (something@something.tld-ish) — the real
+// validation is whether the mail gets delivered; over-strict regexes
+// reject legitimate addresses.
+const MAX_EMAIL_LEN = 254;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export async function GET() {
   try {
     const ctx = await requireRole("admin");
@@ -178,7 +188,12 @@ export async function POST(request: Request) {
     if (!limit.success) return rateLimitResponse(limit);
 
     const body = (await request.json().catch(() => null)) as
-      | { role?: unknown; expiresInDays?: unknown; label?: unknown }
+      | {
+          role?: unknown;
+          expiresInDays?: unknown;
+          label?: unknown;
+          email?: unknown;
+        }
       | null;
 
     const role = body?.role;
@@ -212,6 +227,26 @@ export async function POST(request: Request) {
       }
       label = trimmed === "" ? null : trimmed;
     }
+
+    // Optional: an email address to deliver the invite link to.
+    // Sending is best-effort — the invite is created and the link
+    // returned either way, so a bounced/failed send never strands
+    // the admin without a shareable URL.
+    let email: string | null = null;
+    if (typeof body?.email === "string" && body.email.trim() !== "") {
+      const trimmed = body.email.trim();
+      if (trimmed.length > MAX_EMAIL_LEN || !EMAIL_RE.test(trimmed)) {
+        return NextResponse.json(
+          { error: "'email' must be a valid email address" },
+          { status: 400 },
+        );
+      }
+      email = trimmed;
+    }
+
+    // Default the label to the email so the pending-invitations list
+    // shows who the link was sent to without the admin typing it twice.
+    if (email && !label) label = email;
 
     // Resolve the public base URL BEFORE inserting: if the server
     // can't build a usable invite link there is no point persisting
@@ -250,13 +285,52 @@ export async function POST(request: Request) {
       );
     }
 
+    const url = inviteUrl(token, baseUrl);
+
+    // Deliver the link by email when the admin asked for it. Failure
+    // is reported, not fatal: the row exists and the URL is in the
+    // response, so the admin can always fall back to manual sharing.
+    let emailSent = false;
+    let emailError: string | null = null;
+    if (email) {
+      if (!isSmtpConfigured()) {
+        emailError =
+          "Email not sent: SMTP is not configured on this server. Share the link manually, or set the SMTP_* environment variables.";
+      } else {
+        try {
+          const rendered = buildInviteEmail({
+            accountName: ctx.account.name,
+            role,
+            url,
+            expiresInDays: expiryDays,
+          });
+          await sendEmail({
+            to: email,
+            subject: rendered.subject,
+            html: rendered.html,
+            text: rendered.text,
+          });
+          emailSent = true;
+        } catch (err) {
+          console.error(
+            "[POST /api/account/invitations] invite email send failed:",
+            err,
+          );
+          emailError =
+            "Email not sent: the SMTP server rejected the message. Share the link manually.";
+        }
+      }
+    }
+
     return NextResponse.json(
       {
         invitation: data,
         // Plaintext payload — visible to the admin exactly once.
         token,
-        url: inviteUrl(token, baseUrl),
+        url,
         expiresInDays: expiryDays,
+        emailSent,
+        ...(emailError ? { emailError } : {}),
       },
       { status: 201 },
     );

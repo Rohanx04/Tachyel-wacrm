@@ -1274,7 +1274,12 @@
       "labelTooLong": "Label must be {max} characters or fewer",
       "copied": "Invite link copied",
       "clipboardBlocked": "Clipboard blocked — copy the link manually",
-      "whatsappMessage": "Join {accountName} on Tachyel CRM using this link (valid for {expiresInDays} days): {url}"
+      "whatsappMessage": "Join {accountName} on Tachyel CRM using this link (valid for {expiresInDays} days): {url}",
+      "emailTitle": "Invitee email",
+      "emailPlaceholder": "teammate@example.com",
+      "emailHint": "If set, we'll email the invite link directly (requires SMTP to be configured on the server).",
+      "emailSentBanner": "Invite emailed to {email}.",
+      "emailFailedBanner": "Couldn't email the invite to {email}."
     },
     "tagsAndFields": {
       "title": "Fields & tags",
